@@ -29,11 +29,14 @@ def filter_tokens(tokens, tokens2remove=None, use_stemming=False):
   if tokens2remove is None:
     return tokens
   elif use_stemming:
-    tokens = [stemmer.stem(t)  for t in tokens]
+    t = []
+    for token in tokens:
+      t.append(stemmer.stem(token))
+    tokens = t
   else:
-    for t in tokens:
-      if t in tokens2remove:
-        tokens = list(filter(lambda a: a!=t, tokens))
+    for token in tokens:
+      if token in tokens2remove:
+        tokens = list(filter(lambda a: a != token, tokens))
   return tokens
 
 print(filter_tokens(tokenize("omer aflalo and pich 5 puts af put"),["a"],True))
