@@ -1,14 +1,32 @@
 from flask import Flask, request, jsonify
 
+import numpy as np
+
+# import tokenizer
+import pickle
+
+import cosine_sim
+import tfidf
 import tokenizer
+import top_files
+from inverted_index_colab import InvertedIndex
 
 
 class MyFlaskApp(Flask):
     def run(self, host=None, port=None, debug=None, **options):
         super(MyFlaskApp, self).run(host=host, port=port, debug=debug, **options)
 
+
 app = MyFlaskApp(__name__)
 app.config['JSONIFY_PRETTYPRINT_REGULAR'] = False
+
+# index = inverted_index_gcp.InvertedIndex.read_index("", "index.pkl")
+
+# print(index.df)
+body_index = InvertedIndex().read_index("", "index")
+# iter = index.posting_lists_iter()
+# for x in iter:
+print("x")
 
 
 @app.route("/search")
@@ -32,12 +50,17 @@ def search():
     res = []
     query = request.args.get('query', '')
     if len(query) == 0:
-      return jsonify(res)
+        return jsonify(res)
     # BEGIN SOLUTION
-    tokenized_token = tokenizer.tokenize_text(query)
-
+    tokenized_query = tokenizer.tokenize_text(query)
+    query_tfidf = tfidf.generate_query_tfidf_vector(tokenized_query, body_index)
+    words, pls = zip(*body_index.posting_lists_iter())
+    index_tfidf = tfidf.generate_document_tfidf_matrix(tokenized_query, body_index, words, pls)
+    cosine_dict = cosine_sim.cosine_similarity(index_tfidf, query_tfidf)
     # END SOLUTION
+    res=top_files.get_top_n(cosine_dict,100)
     return jsonify(res)
+
 
 @app.route("/search_body")
 def search_body():
@@ -58,11 +81,12 @@ def search_body():
     res = []
     query = request.args.get('query', '')
     if len(query) == 0:
-      return jsonify(res)
+        return jsonify(res)
     # BEGIN SOLUTION
 
     # END SOLUTION
     return jsonify(res)
+
 
 @app.route("/search_title")
 def search_title():
@@ -88,11 +112,12 @@ def search_title():
     res = []
     query = request.args.get('query', '')
     if len(query) == 0:
-      return jsonify(res)
+        return jsonify(res)
     # BEGIN SOLUTION
 
     # END SOLUTION
     return jsonify(res)
+
 
 @app.route("/search_anchor")
 def search_anchor():
@@ -118,11 +143,12 @@ def search_anchor():
     res = []
     query = request.args.get('query', '')
     if len(query) == 0:
-      return jsonify(res)
+        return jsonify(res)
     # BEGIN SOLUTION
-    
+
     # END SOLUTION
     return jsonify(res)
+
 
 @app.route("/get_pagerank", methods=['POST'])
 def get_pagerank():
@@ -143,11 +169,12 @@ def get_pagerank():
     res = []
     wiki_ids = request.get_json()
     if len(wiki_ids) == 0:
-      return jsonify(res)
+        return jsonify(res)
     # BEGIN SOLUTION
 
     # END SOLUTION
     return jsonify(res)
+
 
 @app.route("/get_pageview", methods=['POST'])
 def get_pageview():
@@ -170,7 +197,7 @@ def get_pageview():
     res = []
     wiki_ids = request.get_json()
     if len(wiki_ids) == 0:
-      return jsonify(res)
+        return jsonify(res)
     # BEGIN SOLUTION
 
     # END SOLUTION
