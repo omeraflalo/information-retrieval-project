@@ -45,7 +45,7 @@ def generate_query_tfidf_vector(query_to_search, index):
     return Q
 
 
-def get_candidate_documents_and_scores(query_to_search, index, words, pls):
+def get_candidate_documents_and_scores(query_to_search, index, path):
     """
     Generate a dictionary representing a pool of candidate documents for a given query. This function will go through every token in query_to_search
     and fetch the corresponding information (e.g., term frequency, document frequency, etc.') needed to calculate TF-IDF from the posting list.
@@ -70,9 +70,10 @@ def get_candidate_documents_and_scores(query_to_search, index, words, pls):
     """
     candidates = {}
     for term in set(query_to_search):
-        if term in words:
-            list_of_doc = pls[words.index(term)]
-            normlized_tfidf = [(doc_id, (freq / index.DL[int(doc_id)]) * math.log(len(index.DL) / index.df[term], 10)) for doc_id, freq in list_of_doc]
+        if term in index.df.keys():
+            list_of_doc = index.read_posting_list(path, term)
+            normlized_tfidf = [(doc_id, (freq / index.DL[int(doc_id)]) * math.log(len(index.DL) / index.df[term], 10))
+                               for doc_id, freq in list_of_doc]
 
             for doc_id, tfidf in normlized_tfidf:
                 candidates[(doc_id, term)] = candidates.get((doc_id, term), 0) + tfidf
@@ -80,7 +81,7 @@ def get_candidate_documents_and_scores(query_to_search, index, words, pls):
     return candidates
 
 
-def generate_document_tfidf_matrix(query_to_search, index, words, pls):
+def generate_document_tfidf_matrix(query_to_search, index, path):
     """
     Generate a DataFrame `D` of tfidf scores for a given query.
     Rows will be the documents candidates for a given query
@@ -103,8 +104,8 @@ def generate_document_tfidf_matrix(query_to_search, index, words, pls):
     """
 
     total_vocab_size = len(index.df)
-    candidates_scores = get_candidate_documents_and_scores(query_to_search, index, words,
-                                                           pls)  # We do not need to utilize all document. Only the docuemnts which have corrspoinding terms with the query.
+    candidates_scores = get_candidate_documents_and_scores(query_to_search, index,
+                                                           path)  # We do not need to utilize all document. Only the docuemnts which have corrspoinding terms with the query.
     unique_candidates = set([doc_id for doc_id, freq in candidates_scores.keys()])
     D = np.zeros((len(unique_candidates), total_vocab_size))
     D = pd.DataFrame(D)

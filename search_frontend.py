@@ -1,18 +1,14 @@
-from collections import Counter
-from flask import Flask, request, jsonify
-
-import numpy as np
-
-# import tokenizer
 import pickle
+from collections import Counter
+
+from flask import Flask, request, jsonify
+from gensim.models import Word2Vec
 
 import config
 import cosine_sim
-import tfidf
 import tokenizer
 import top_files
-from inverted_index_colab import InvertedIndex, MultiFileReader, TUPLE_SIZE
-from contextlib import closing
+from inverted_index_gcp import InvertedIndex
 
 
 class MyFlaskApp(Flask):
@@ -23,62 +19,56 @@ class MyFlaskApp(Flask):
 app = MyFlaskApp(__name__)
 app.config['JSONIFY_PRETTYPRINT_REGULAR'] = False
 
-with open("id_to_title.pkl", 'rb') as f:
+body_index = InvertedIndex().read_index(config.path_to_body_index, "index")
+title_index = InvertedIndex().read_index(config.path_to_title_index, "index")
+anchor_index = InvertedIndex().read_index(config.path_to_anchor_index, "index")
+body_stemming_index = InvertedIndex().read_index(config.path_to_body_stemming_index, "index")
+
+with open("pkl/id_to_title.pkl", 'rb') as f:
     id_to_title = pickle.load(f)
 
-with open("page_rank.pkl", 'rb') as f:
+with open("pkl/page_rank.pkl", 'rb') as f:
     page_rank = pickle.load(f)
 
-with open("page_views.pkl", 'rb') as f:
+with open("pkl/page_views.pkl", 'rb') as f:
     page_views = pickle.load(f)
 
-body_index = InvertedIndex().read_index(config.path_to_body_index, "index")
-title_index = InvertedIndex().read_index(config.path_to_title_index, "title_index")
-anchor_index = InvertedIndex().read_index(config.path_to_anchor_index, "anchor_index")
+with open("pkl/DL_body.pkl", 'rb') as f:
+    body_index.DL = pickle.load(f)
+
+with open("pkl/DL_title.pkl", 'rb') as f:
+    title_index.DL = pickle.load(f)
+
+word2vec = Word2Vec.load("word2vec111_chank_49000.model")
 
 
 def title_from_id_list(lst):
     return list(map(lambda x: (x[0], id_to_title[int(x[0])]), lst))
 
 
-def read_posting_list(path, inverted, w):
-    with closing(MultiFileReader()) as reader:
-        locs = inverted.posting_locs[w]
-        b = reader.read(path, locs, inverted.df[w] * TUPLE_SIZE)
-        posting_list = []
-        for i in range(inverted.df[w]):
-            doc_id = int.from_bytes(b[i * TUPLE_SIZE:i * TUPLE_SIZE + 4], 'big')
-            tf = int.from_bytes(b[i * TUPLE_SIZE + 4:(i + 1) * TUPLE_SIZE], 'big')
-            posting_list.append((doc_id, tf))
-        return posting_list
-
-
 def calculate_cosin_sim(query, index_to_sim, path, stemming=True):
     tokenized_query = tokenizer.tokenize(query)
     if stemming:
         tokenized_query = tokenizer.stemmeing(tokenized_query)
-    query_tfidf = tfidf.generate_query_tfidf_vector(tokenized_query, index_to_sim)
-    words, pls = zip(*index_to_sim.posting_lists_iter(path))
-    index_tfidf = tfidf.generate_document_tfidf_matrix(tokenized_query, index_to_sim, words, pls)
-    return cosine_sim.cosine_similarity(index_tfidf, query_tfidf)
+    return cosine_sim.temp(tokenized_query, index_to_sim, path)
 
 
-def matching_terms(query, index_to_match, path):
+def matching_terms(tokenized_query, index_to_match, path):
     dic = {}
-    for token in set(tokenizer.tokenize(query)):
+    for token in set(tokenized_query):
         if index_to_match.df.get(token):
             for doc, tf in index_to_match.read_posting_list(path, token):
                 dic[doc] = dic.get(doc, 0) + 1
-    return Counter(dic).most_common()
+    return dic
 
 
 @app.route("/search")
 def search():
-    ''' Returns up to a 100 of your best search results for the query. This is 
+    """ Returns up to a 100 of your best search results for the query. This is
         the place to put forward your best search engine, and you are free to
-        implement the retrieval whoever you'd like within the bound of the 
+        implement the retrieval whoever you'd like within the bound of the
         project requirements (efficiency, quality, etc.). That means it is up to
-        you to decide on whether to use stemming, remove stopwords, use 
+        you to decide on whether to use stemming, remove stopwords, use
         PageRank, query expansion, etc.
 
         To issue a query navigate to a URL like:
@@ -87,33 +77,59 @@ def search():
         if you're using ngrok on Colab or your external IP on GCP.
     Returns:
     --------
-        list of up to 100 search results, ordered from best to worst where each 
+        list of up to 100 search results, ordered from best to worst where each
         element is a tuple (wiki_id, title).
-    '''
+    """
     res = []
     query = request.args.get('query', '')
     if len(query) == 0:
         return jsonify(res)
 
-    body_cosine = calculate_cosin_sim(query, body_index, config.path_to_body_index)
-    title_cosine = calculate_cosin_sim(query, body_index, config.path_to_title_index)
-    new_dict = {}
-    for x in body_cosine.keys():
-        new_dict[x] = new_dict.get(x, 0) + body_cosine[x] * 0.75
-    for x in title_cosine.keys():
-        new_dict[x] = new_dict.get(x, 0) + title_cosine[x] * 0.25
+    # res = matching_terms(query, title_index, config.path_to_title_index)
+    #
+    # res = top_files.get_top_n(res, id_to_title, 100)
+    # body_cosine = calculate_cosin_sim(query, body_index, config.path_to_body_index, False)
+    # res = top_files.get_top_n(body_cosine, id_to_title, 100)
+    tokenized_query = tokenizer.stemmeing(tokenizer.tokenize(query))
+    add = []
+    for token in tokenized_query:
+        if token in word2vec.wv.key_to_index:
+            add += list(map(lambda x: x[0], filter(lambda x: x[1] > 0.9, word2vec.wv.most_similar(token, topn=5))))
+    tokenized_query += add
+    res1 = Counter(
+        matching_terms(tokenized_query, body_stemming_index, config.path_to_body_stemming_index)).most_common()
+    res2 = matching_terms(tokenized_query, title_index, config.path_to_title_index)
+    res3 = matching_terms(tokenized_query, anchor_index, config.path_to_anchor_index)
+    counter = 0
 
-    res = top_files.get_top_n(new_dict, 100)
+    for i in res1:
+        if res2.get(i[0]) and res3.get(i[0]):
+            counter += 1
+            res.append(i)
+        if counter == 100:
+            break
+
     res = title_from_id_list(res)
     return jsonify(res)
 
 
+# body_cosine = calculate_cosin_sim(query, body_index, config.path_to_body_index)
+# title_cosine = calculate_cosin_sim(query, body_index, config.path_to_title_index)
+# new_dict = {}
+# for x in body_cosine.keys():
+#     new_dict[x] = new_dict.get(x, 0) + body_cosine[x] * 0.75
+# for x in title_cosine.keys():
+#     new_dict[x] = new_dict.get(x, 0) + title_cosine[x] * 0.25
+#
+# for x in new_dict.keys():
+#     new_dict[x] = new_dict.get(x, 0) * 0.8 + page_rank.get(x, 0) * 0.2
+
 @app.route("/search_body")
 def search_body():
-    ''' Returns up to a 100 search results for the query using TFIDF AND COSINE
+    """ Returns up to a 100 search results for the query using TFIDF AND COSINE
         SIMILARITY OF THE BODY OF ARTICLES ONLY. DO NOT use stemming. DO USE the
         staff-provided tokenizer from Assignment 3 (GCP part) to do the
-        tokenization and remove stopwords. 
+        tokenization and remove stopwords.
 
         To issue a query navigate to a URL like:
          http://YOUR_SERVER_DOMAIN/search_body?query=hello+world
@@ -121,17 +137,16 @@ def search_body():
         if you're using ngrok on Colab or your external IP on GCP.
     Returns:
     --------
-        list of up to 100 search results, ordered from best to worst where each 
+        list of up to 100 search results, ordered from best to worst where each
         element is a tuple (wiki_id, title).
-    '''
+    """
     res = []
     query = request.args.get('query', '')
     if len(query) == 0:
         return jsonify(res)
     # BEGIN SOLUTION
     body_cosine = calculate_cosin_sim(query, body_index, config.path_to_body_index, False)
-    res = top_files.get_top_n(body_cosine, 100)
-    res = title_from_id_list(res)
+    res = top_files.get_top_n(body_cosine, id_to_title, 100)
 
     # END SOLUTION
     return jsonify(res)
@@ -139,15 +154,15 @@ def search_body():
 
 @app.route("/search_title")
 def search_title():
-    ''' Returns ALL (not just top 100) search results that contain A QUERY WORD 
-        IN THE TITLE of articles, ordered in descending order of the NUMBER OF 
-        DISTINCT QUERY WORDS that appear in the title. DO NOT use stemming. DO 
-        USE the staff-provided tokenizer from Assignment 3 (GCP part) to do the 
-        tokenization and remove stopwords. For example, a document 
+    """ Returns ALL (not just top 100) search results that contain A QUERY WORD
+        IN THE TITLE of articles, ordered in descending order of the NUMBER OF
+        DISTINCT QUERY WORDS that appear in the title. DO NOT use stemming. DO
+        USE the staff-provided tokenizer from Assignment 3 (GCP part) to do the
+        tokenization and remove stopwords. For example, a document
         with a title that matches two distinct query words will be ranked before a
         document with a title that matches only one distinct query word,
-        regardless of the number of times the term appeared in the title (or 
-        query). 
+        regardless of the number of times the term appeared in the title (or
+        query).
 
         Test this by navigating to the a URL like:
          http://YOUR_SERVER_DOMAIN/search_title?query=hello+world
@@ -155,15 +170,15 @@ def search_title():
         if you're using ngrok on Colab or your external IP on GCP.
     Returns:
     --------
-        list of ALL (not just top 100) search results, ordered from best to 
+        list of ALL (not just top 100) search results, ordered from best to
         worst where each element is a tuple (wiki_id, title).
-    '''
+    """
     res = []
     query = request.args.get('query', '')
     if len(query) == 0:
         return jsonify(res)
-
-    res = matching_terms(query, title_index, config.path_to_title_index)
+    tokenized_query = tokenizer.tokenize(query)
+    res = Counter(matching_terms(tokenized_query, title_index, config.path_to_title_index)).most_common()
     res = title_from_id_list(res)
 
     return jsonify(res)
@@ -171,15 +186,15 @@ def search_title():
 
 @app.route("/search_anchor")
 def search_anchor():
-    ''' Returns ALL (not just top 100) search results that contain A QUERY WORD 
-        IN THE ANCHOR TEXT of articles, ordered in descending order of the 
-        NUMBER OF QUERY WORDS that appear in anchor text linking to the page. 
-        DO NOT use stemming. DO USE the staff-provided tokenizer from Assignment 
-        3 (GCP part) to do the tokenization and remove stopwords. For example, 
-        a document with a anchor text that matches two distinct query words will 
-        be ranked before a document with anchor text that matches only one 
-        distinct query word, regardless of the number of times the term appeared 
-        in the anchor text (or query). 
+    """ Returns ALL (not just top 100) search results that contain A QUERY WORD
+        IN THE ANCHOR TEXT of articles, ordered in descending order of the
+        NUMBER OF QUERY WORDS that appear in anchor text linking to the page.
+        DO NOT use stemming. DO USE the staff-provided tokenizer from Assignment
+        3 (GCP part) to do the tokenization and remove stopwords. For example,
+        a document with a anchor text that matches two distinct query words will
+        be ranked before a document with anchor text that matches only one
+        distinct query word, regardless of the number of times the term appeared
+        in the anchor text (or query).
 
         Test this by navigating to the a URL like:
          http://YOUR_SERVER_DOMAIN/search_anchor?query=hello+world
@@ -187,15 +202,15 @@ def search_anchor():
         if you're using ngrok on Colab or your external IP on GCP.
     Returns:
     --------
-        list of ALL (not just top 100) search results, ordered from best to 
+        list of ALL (not just top 100) search results, ordered from best to
         worst where each element is a tuple (wiki_id, title).
-    '''
+    """
     res = []
     query = request.args.get('query', '')
     if len(query) == 0:
         return jsonify(res)
-
-    res = matching_terms(query, anchor_index, config.path_to_anchor_index)
+    tokenized_query = tokenizer.tokenize(query)
+    res = Counter(matching_terms(tokenized_query, anchor_index, config.path_to_anchor_index)).most_common()
     res = title_from_id_list(res)
 
     return jsonify(res)
@@ -203,7 +218,7 @@ def search_anchor():
 
 @app.route("/get_pagerank", methods=['POST'])
 def get_pagerank():
-    ''' Returns PageRank values for a list of provided wiki article IDs. 
+    """ Returns PageRank values for a list of provided wiki article IDs.
 
         Test this by issuing a POST request to a URL like:
           http://YOUR_SERVER_DOMAIN/get_pagerank
@@ -216,21 +231,21 @@ def get_pagerank():
     --------
         list of floats:
           list of PageRank scores that correrspond to the provided article IDs.
-    '''
+    """
     res = []
     wiki_ids = request.get_json()
     if len(wiki_ids) == 0:
         return jsonify(res)
 
-    for id in wiki_ids:
-        res.append(page_rank.get(id, 0))
+    for doc_id in wiki_ids:
+        res.append(page_rank.get(doc_id, 0))
 
     return jsonify(res)
 
 
 @app.route("/get_pageview", methods=['POST'])
 def get_pageview():
-    ''' Returns the number of page views that each of the provide wiki articles
+    """ Returns the number of page views that each of the provide wiki articles
         had in August 2021.
 
         Test this by issuing a POST request to a URL like:
@@ -243,20 +258,20 @@ def get_pageview():
     Returns:
     --------
         list of ints:
-          list of page view numbers from August 2021 that correrspond to the 
+          list of page view numbers from August 2021 that correrspond to the
           provided list article IDs.
-    '''
+    """
     res = []
     wiki_ids = request.get_json()
     if len(wiki_ids) == 0:
         return jsonify(res)
 
-    for id in wiki_ids:
-        res.append(page_views.get(id, 0))
+    for doc_id in wiki_ids:
+        res.append(page_views.get(doc_id, 0))
 
     return jsonify(res)
 
 
 if __name__ == '__main__':
     # run the Flask RESTful API, make the server publicly available (host='0.0.0.0') on port 8080
-    app.run(host='0.0.0.0', port=8080, debug=True)
+    app.run(host='0.0.0.0', port=8080, debug=False)
