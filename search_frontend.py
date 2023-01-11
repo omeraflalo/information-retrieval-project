@@ -6,6 +6,7 @@ import numpy as np
 # import tokenizer
 import pickle
 
+import config
 import cosine_sim
 import tfidf
 import tokenizer
@@ -25,8 +26,15 @@ app.config['JSONIFY_PRETTYPRINT_REGULAR'] = False
 with open("id_to_title.pkl", 'rb') as f:
     id_to_title = pickle.load(f)
 
-body_index = InvertedIndex().read_index("body_index", "index")
-title_index = InvertedIndex().read_index("title_index", "title_index")
+with open("page_rank.pkl", 'rb') as f:
+    page_rank = pickle.load(f)
+
+with open("page_views.pkl", 'rb') as f:
+    page_views = pickle.load(f)
+
+body_index = InvertedIndex().read_index(config.path_to_body_index, "index")
+title_index = InvertedIndex().read_index(config.path_to_title_index, "title_index")
+anchor_index = InvertedIndex().read_index(config.path_to_anchor_index, "anchor_index")
 
 
 def title_from_id_list(lst):
@@ -55,6 +63,15 @@ def calculate_cosin_sim(query, index_to_sim, path, stemming=True):
     return cosine_sim.cosine_similarity(index_tfidf, query_tfidf)
 
 
+def matching_terms(query, index_to_match, path):
+    dic = {}
+    for token in set(tokenizer.tokenize(query)):
+        if index_to_match.df.get(token):
+            for doc, tf in index_to_match.read_posting_list(path, token):
+                dic[doc] = dic.get(doc, 0) + 1
+    return Counter(dic).most_common()
+
+
 @app.route("/search")
 def search():
     ''' Returns up to a 100 of your best search results for the query. This is 
@@ -78,8 +95,8 @@ def search():
     if len(query) == 0:
         return jsonify(res)
 
-    body_cosine = calculate_cosin_sim(query, body_index, "body_index")
-    title_cosine = calculate_cosin_sim(query, body_index, "body_index")
+    body_cosine = calculate_cosin_sim(query, body_index, config.path_to_body_index)
+    title_cosine = calculate_cosin_sim(query, body_index, config.path_to_title_index)
     new_dict = {}
     for x in body_cosine.keys():
         new_dict[x] = new_dict.get(x, 0) + body_cosine[x] * 0.75
@@ -112,7 +129,7 @@ def search_body():
     if len(query) == 0:
         return jsonify(res)
     # BEGIN SOLUTION
-    body_cosine = calculate_cosin_sim(query, body_index, "body_index", False)
+    body_cosine = calculate_cosin_sim(query, body_index, config.path_to_body_index, False)
     res = top_files.get_top_n(body_cosine, 100)
     res = title_from_id_list(res)
 
@@ -145,17 +162,10 @@ def search_title():
     query = request.args.get('query', '')
     if len(query) == 0:
         return jsonify(res)
-    # BEGIN SOLUTION
 
-    dic = {}
-    for token in set(tokenizer.tokenize(query)):
-        if title_index.df.get(token):
-            for doc, tf in title_index.read_posting_list("title_index", token):
-                dic[doc] = dic.get(doc, 0) + tf
-    res = Counter(dic).most_common()
+    res = matching_terms(query, title_index, config.path_to_title_index)
     res = title_from_id_list(res)
 
-    # END SOLUTION
     return jsonify(res)
 
 
@@ -184,9 +194,10 @@ def search_anchor():
     query = request.args.get('query', '')
     if len(query) == 0:
         return jsonify(res)
-    # BEGIN SOLUTION
 
-    # END SOLUTION
+    res = matching_terms(query, anchor_index, config.path_to_anchor_index)
+    res = title_from_id_list(res)
+
     return jsonify(res)
 
 
@@ -210,9 +221,10 @@ def get_pagerank():
     wiki_ids = request.get_json()
     if len(wiki_ids) == 0:
         return jsonify(res)
-    # BEGIN SOLUTION
 
-    # END SOLUTION
+    for id in wiki_ids:
+        res.append(page_rank.get(id, 0))
+
     return jsonify(res)
 
 
@@ -238,9 +250,10 @@ def get_pageview():
     wiki_ids = request.get_json()
     if len(wiki_ids) == 0:
         return jsonify(res)
-    # BEGIN SOLUTION
 
-    # END SOLUTION
+    for id in wiki_ids:
+        res.append(page_views.get(id, 0))
+
     return jsonify(res)
 
 

@@ -4,7 +4,7 @@ from nltk.stem.porter import *
 from nltk.corpus import stopwords
 from nltk.stem.snowball import SnowballStemmer
 
-
+nltk.download('stopwords')
 def tokenize(text):
     english_stopwords = frozenset(stopwords.words('english'))
     corpus_stopwords = ['category', 'references', 'also', 'links', 'extenal', 'see', 'thumb']
