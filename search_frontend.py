@@ -1,3 +1,4 @@
+from collections import Counter
 from flask import Flask, request, jsonify
 
 import numpy as np
@@ -9,7 +10,8 @@ import cosine_sim
 import tfidf
 import tokenizer
 import top_files
-from inverted_index_colab import InvertedIndex
+from inverted_index_colab import InvertedIndex, MultiFileReader, TUPLE_SIZE
+from contextlib import closing
 
 
 class MyFlaskApp(Flask):
@@ -20,13 +22,37 @@ class MyFlaskApp(Flask):
 app = MyFlaskApp(__name__)
 app.config['JSONIFY_PRETTYPRINT_REGULAR'] = False
 
-# index = inverted_index_gcp.InvertedIndex.read_index("", "index.pkl")
+with open("id_to_title.pkl", 'rb') as f:
+    id_to_title = pickle.load(f)
 
-# print(index.df)
-body_index = InvertedIndex().read_index("", "index")
-# iter = index.posting_lists_iter()
-# for x in iter:
-print("x")
+body_index = InvertedIndex().read_index("body_index", "index")
+title_index = InvertedIndex().read_index("title_index", "title_index")
+
+
+def title_from_id_list(lst):
+    return list(map(lambda x: (x[0], id_to_title[int(x[0])]), lst))
+
+
+def read_posting_list(path, inverted, w):
+    with closing(MultiFileReader()) as reader:
+        locs = inverted.posting_locs[w]
+        b = reader.read(path, locs, inverted.df[w] * TUPLE_SIZE)
+        posting_list = []
+        for i in range(inverted.df[w]):
+            doc_id = int.from_bytes(b[i * TUPLE_SIZE:i * TUPLE_SIZE + 4], 'big')
+            tf = int.from_bytes(b[i * TUPLE_SIZE + 4:(i + 1) * TUPLE_SIZE], 'big')
+            posting_list.append((doc_id, tf))
+        return posting_list
+
+
+def calculate_cosin_sim(query, index_to_sim, path, stemming=True):
+    tokenized_query = tokenizer.tokenize(query)
+    if stemming:
+        tokenized_query = tokenizer.stemmeing(tokenized_query)
+    query_tfidf = tfidf.generate_query_tfidf_vector(tokenized_query, index_to_sim)
+    words, pls = zip(*index_to_sim.posting_lists_iter(path))
+    index_tfidf = tfidf.generate_document_tfidf_matrix(tokenized_query, index_to_sim, words, pls)
+    return cosine_sim.cosine_similarity(index_tfidf, query_tfidf)
 
 
 @app.route("/search")
@@ -51,22 +77,25 @@ def search():
     query = request.args.get('query', '')
     if len(query) == 0:
         return jsonify(res)
-    # BEGIN SOLUTION
-    tokenized_query = tokenizer.tokenize_text(query)
-    query_tfidf = tfidf.generate_query_tfidf_vector(tokenized_query, body_index)
-    words, pls = zip(*body_index.posting_lists_iter())
-    index_tfidf = tfidf.generate_document_tfidf_matrix(tokenized_query, body_index, words, pls)
-    cosine_dict = cosine_sim.cosine_similarity(index_tfidf, query_tfidf)
-    # END SOLUTION
-    res=top_files.get_top_n(cosine_dict,100)
+
+    body_cosine = calculate_cosin_sim(query, body_index, "body_index")
+    title_cosine = calculate_cosin_sim(query, body_index, "body_index")
+    new_dict = {}
+    for x in body_cosine.keys():
+        new_dict[x] = new_dict.get(x, 0) + body_cosine[x] * 0.75
+    for x in title_cosine.keys():
+        new_dict[x] = new_dict.get(x, 0) + title_cosine[x] * 0.25
+
+    res = top_files.get_top_n(new_dict, 100)
+    res = title_from_id_list(res)
     return jsonify(res)
 
 
 @app.route("/search_body")
 def search_body():
     ''' Returns up to a 100 search results for the query using TFIDF AND COSINE
-        SIMILARITY OF THE BODY OF ARTICLES ONLY. DO NOT use stemming. DO USE the 
-        staff-provided tokenizer from Assignment 3 (GCP part) to do the 
+        SIMILARITY OF THE BODY OF ARTICLES ONLY. DO NOT use stemming. DO USE the
+        staff-provided tokenizer from Assignment 3 (GCP part) to do the
         tokenization and remove stopwords. 
 
         To issue a query navigate to a URL like:
@@ -83,6 +112,9 @@ def search_body():
     if len(query) == 0:
         return jsonify(res)
     # BEGIN SOLUTION
+    body_cosine = calculate_cosin_sim(query, body_index, "body_index", False)
+    res = top_files.get_top_n(body_cosine, 100)
+    res = title_from_id_list(res)
 
     # END SOLUTION
     return jsonify(res)
@@ -95,8 +127,8 @@ def search_title():
         DISTINCT QUERY WORDS that appear in the title. DO NOT use stemming. DO 
         USE the staff-provided tokenizer from Assignment 3 (GCP part) to do the 
         tokenization and remove stopwords. For example, a document 
-        with a title that matches two distinct query words will be ranked before a 
-        document with a title that matches only one distinct query word, 
+        with a title that matches two distinct query words will be ranked before a
+        document with a title that matches only one distinct query word,
         regardless of the number of times the term appeared in the title (or 
         query). 
 
@@ -114,6 +146,14 @@ def search_title():
     if len(query) == 0:
         return jsonify(res)
     # BEGIN SOLUTION
+
+    dic = {}
+    for token in set(tokenizer.tokenize(query)):
+        if title_index.df.get(token):
+            for doc, tf in title_index.read_posting_list("title_index", token):
+                dic[doc] = dic.get(doc, 0) + tf
+    res = Counter(dic).most_common()
+    res = title_from_id_list(res)
 
     # END SOLUTION
     return jsonify(res)

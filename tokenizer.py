@@ -6,42 +6,17 @@ from nltk.stem.snowball import SnowballStemmer
 
 
 def tokenize(text):
-    RE_WORD = re.compile(r"""[\#\@\w](['\-]?\w){,24}""", re.UNICODE)
-    return [token.group() for token in RE_WORD.finditer(text.lower())]
+    english_stopwords = frozenset(stopwords.words('english'))
+    corpus_stopwords = ['category', 'references', 'also', 'links', 'extenal', 'see', 'thumb']
+    RE_WORD = re.compile(r"""[\#\@\w](['\-]?\w){2,24}""", re.UNICODE)
+    all_stopwords = english_stopwords.union(corpus_stopwords)
+    tokens = [token.group() for token in RE_WORD.finditer(text.lower())]
+    return list(filter(lambda x: x not in all_stopwords, tokens))
 
 
-# print(tokenize("omer aflalo and pich 5 . , puts af put"))
-
-
-# Getting tokens from the text while removing punctuations.
-def filter_tokens(tokens, tokens2remove=None, stemming=False):
-    ''' The function takes a list of tokens, filters out `tokens2remove` and
-      stem the tokens using `stemmer`.
-  Parameters:
-  -----------
-  tokens: list of str.
-    Input tokens.
-  tokens2remove: frozenset.
-    Tokens to remove (before stemming).
-  use_stemming: bool.
-    If true, apply stemmer.stem on tokens.
-  Returns:
-  --------
-  list of tokens from the text.
-  '''
+def stemmeing(tokens):
     stemmer = PorterStemmer()
-    if tokens2remove is None:
-        return tokens
-    for token in tokens:
-        if token in tokens2remove:
-            tokens = list(filter(lambda a: a != token, tokens))
-    if stemming:
-        tokens = [stemmer.stem(t) for t in tokens]
-    return set(tokens)
+    tokens = [stemmer.stem(t) for t in tokens]
+    return tokens
 
 
-def tokenize_text(txt, stemming=False):
-    return filter_tokens(tokenize(txt), stopwords.words('english'), stemming)
-
-
-# print(tokenize_text("omer aflalo play was played bring brought and an pich 5 puts teach taught af put"))
