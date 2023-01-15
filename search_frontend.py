@@ -86,32 +86,31 @@ def search():
     if len(query) == 0:
         return jsonify(res)
     tokenized_query = tokenizer.tokenize(query)
-    # add = []
-    # for token in tokenized_query:
-    #     if token in word2vec.wv.key_to_index:
-    #         add += list(map(lambda x: x[0], filter(lambda x: x[1] > 0.85, word2vec.wv.most_similar(token, topn=5))))
-    # print(add)
-    # tokenized_query += add
+
     body_result = Counter(matching_terms(tokenized_query, body_index, config.path_to_body_index)).most_common()
     title_result = matching_terms(tokenized_query, title_index, config.path_to_title_index)
-    # anchor_result = matching_terms(tokenized_query, anchor_index, config.path_to_anchor_index)
-    counter = 0
+    more_to_add = 300
+    body_len = len(body_result)
 
     for doc_id, score in body_result:
         title_score = title_result.get(doc_id)
-        # anchor_score = anchor_result.get(doc_id)
-        if title_score:  # and anchor_score:
-            counter += 1
+        body_len -= 1
+        if title_score:
+            more_to_add -= 1
             res.append(
                 (doc_id, score + title_score, page_rank.get(doc_id, 0), page_views.get(doc_id, 0)))
-        if counter == 300:
+        elif body_len < more_to_add:
+            res.append((doc_id, score, page_rank.get(doc_id, 0), page_views.get(doc_id, 0)))
+        if more_to_add == 0:
             break
 
-    print(len(res))
+    # print(len(res))
     res = sorted(res, key=lambda x: (-x[1], -x[3], -x[2]))[:100]
 
     res = title_from_id_list(res)
-    # print(len(res))
+    # if len(res) < 100:
+    #     res = list(res+title_from_id_list(list(body_result)))[:100]
+    print(len(res))
 
     return jsonify(res)
 
