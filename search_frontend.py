@@ -8,6 +8,7 @@ import config
 import cosine_sim
 import tokenizer
 import top_files
+import math
 from inverted_index_gcp import InvertedIndex
 
 
@@ -22,7 +23,7 @@ app.config['JSONIFY_PRETTYPRINT_REGULAR'] = False
 body_index = InvertedIndex().read_index(config.path_to_body_index, "index")
 title_index = InvertedIndex().read_index(config.path_to_title_index, "index")
 anchor_index = InvertedIndex().read_index(config.path_to_anchor_index, "index")
-body_stemming_index = InvertedIndex().read_index(config.path_to_body_stemming_index, "index")
+# body_stemming_index = InvertedIndex().read_index(config.path_to_body_stemming_index, "index")
 
 with open("pkl/id_to_title.pkl", 'rb') as f:
     id_to_title = pickle.load(f)
@@ -84,45 +85,36 @@ def search():
     query = request.args.get('query', '')
     if len(query) == 0:
         return jsonify(res)
-
-    # res = matching_terms(query, title_index, config.path_to_title_index)
-    #
-    # res = top_files.get_top_n(res, id_to_title, 100)
-    # body_cosine = calculate_cosin_sim(query, body_index, config.path_to_body_index, False)
-    # res = top_files.get_top_n(body_cosine, id_to_title, 100)
-    tokenized_query = tokenizer.stemmeing(tokenizer.tokenize(query))
-    add = []
-    for token in tokenized_query:
-        if token in word2vec.wv.key_to_index:
-            add += list(map(lambda x: x[0], filter(lambda x: x[1] > 0.9, word2vec.wv.most_similar(token, topn=5))))
-    tokenized_query += add
-    res1 = Counter(
-        matching_terms(tokenized_query, body_stemming_index, config.path_to_body_stemming_index)).most_common()
-    res2 = matching_terms(tokenized_query, title_index, config.path_to_title_index)
-    res3 = matching_terms(tokenized_query, anchor_index, config.path_to_anchor_index)
+    tokenized_query = tokenizer.tokenize(query)
+    # add = []
+    # for token in tokenized_query:
+    #     if token in word2vec.wv.key_to_index:
+    #         add += list(map(lambda x: x[0], filter(lambda x: x[1] > 0.85, word2vec.wv.most_similar(token, topn=5))))
+    # print(add)
+    # tokenized_query += add
+    body_result = Counter(matching_terms(tokenized_query, body_index, config.path_to_body_index)).most_common()
+    title_result = matching_terms(tokenized_query, title_index, config.path_to_title_index)
+    # anchor_result = matching_terms(tokenized_query, anchor_index, config.path_to_anchor_index)
     counter = 0
 
-    for i in res1:
-        if res2.get(i[0]) and res3.get(i[0]):
+    for doc_id, score in body_result:
+        title_score = title_result.get(doc_id)
+        # anchor_score = anchor_result.get(doc_id)
+        if title_score:  # and anchor_score:
             counter += 1
-            res.append(i)
-        if counter == 100:
+            res.append(
+                (doc_id, score + title_score, page_rank.get(doc_id, 0), page_views.get(doc_id, 0)))
+        if counter == 300:
             break
 
+    print(len(res))
+    res = sorted(res, key=lambda x: (-x[1], -x[3], -x[2]))[:100]
+
     res = title_from_id_list(res)
+    # print(len(res))
+
     return jsonify(res)
 
-
-# body_cosine = calculate_cosin_sim(query, body_index, config.path_to_body_index)
-# title_cosine = calculate_cosin_sim(query, body_index, config.path_to_title_index)
-# new_dict = {}
-# for x in body_cosine.keys():
-#     new_dict[x] = new_dict.get(x, 0) + body_cosine[x] * 0.75
-# for x in title_cosine.keys():
-#     new_dict[x] = new_dict.get(x, 0) + title_cosine[x] * 0.25
-#
-# for x in new_dict.keys():
-#     new_dict[x] = new_dict.get(x, 0) * 0.8 + page_rank.get(x, 0) * 0.2
 
 @app.route("/search_body")
 def search_body():
