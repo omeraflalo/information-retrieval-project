@@ -110,7 +110,6 @@ def search():
     res = title_from_id_list(res)
     # if len(res) < 100:
     #     res = list(res+title_from_id_list(list(body_result)))[:100]
-    print(len(res))
 
     return jsonify(res)
 
